@@ -1,0 +1,475 @@
+/* Folia 风格 · 雨爱（司凤版）
+ * 设计语言复刻自 chthollyphile/folia-major：
+ * 午夜墨染底色 #09090b、Inter/Noto Sans 字体栈、毛玻璃面板、胶囊控件
+ */
+
+:root {
+  --bg: #09090b;
+  --text-primary: #f4f4f5;
+  --text-secondary: #71717a;
+  /* 以下三个强调色由 app.js 从中央动图自动提取 */
+  --c1: #ff6fa5;
+  --c2: #6fe7ff;
+  --c3: #a06bff;
+  --glass-bg: rgba(255, 255, 255, .06);
+  --glass-border: rgba(255, 255, 255, .12);
+  font-family: "Inter", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+body { cursor: default; user-select: none; }
+
+/* ---------- 背景：WebGL Mesh 渐变 ---------- */
+#bg {
+  position: fixed;
+  inset: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  display: block;
+  background: #09090b;
+}
+
+#wave {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  width: 100%; height: 132px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px clamp(18px, 3vw, 34px);
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; letter-spacing: .24em; color: var(--text-secondary);
+  text-transform: uppercase;
+}
+.brand .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--c1);
+  box-shadow: 0 0 12px var(--c1);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse { 50% { transform: scale(.55); opacity: .5; } }
+
+.ghost-btn {
+  border: 1px solid var(--glass-border);
+  background: rgba(20, 20, 28, .55);
+  color: var(--text-primary);
+  padding: 7px 15px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: .22s;
+}
+.ghost-btn:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.3); }
+.ghost-btn.small { padding: 5px 12px; font-size: 11px; }
+.ghost-btn.active {
+  border-color: color-mix(in srgb, var(--c1) 70%, transparent);
+  background: color-mix(in srgb, var(--c1) 20%, transparent);
+  color: #fff;
+}
+
+/* ---------- 中央舞台 ---------- */
+.stage {
+  position: relative; z-index: 10;
+  height: 100%;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 72px 24px 150px;
+}
+
+.hero {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  min-height: 0;
+}
+
+.gif-disc {
+  position: relative;
+  width: min(31vh, 272px);
+  height: min(31vh, 272px);
+  border-radius: 50%;
+  overflow: hidden;
+  will-change: transform;
+  transform-origin: 50% 50%;
+  background: #101014;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.1),
+    0 30px 80px rgba(0,0,0,.6);
+}
+.gif-disc img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+.disc-gloss {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255,255,255,.22), transparent 40%, transparent 62%, rgba(255,255,255,.08));
+  pointer-events: none;
+}
+
+.ring {
+  position: absolute;
+  width: min(38vh, 330px);
+  height: min(38vh, 330px);
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.08);
+  pointer-events: none;
+}
+
+/* 旋转彩环（随旋律转动） */
+.orbit {
+  position: absolute;
+  width: min(41vh, 352px);
+  height: min(41vh, 352px);
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--c1) 60%, transparent) 55deg,
+    transparent 135deg,
+    color-mix(in srgb, var(--c2) 50%, transparent) 215deg,
+    transparent 295deg);
+  -webkit-mask: radial-gradient(circle, transparent 60.5%, #000 62.5%, #000 65.5%, transparent 67.5%);
+  mask: radial-gradient(circle, transparent 60.5%, #000 62.5%, #000 65.5%, transparent 67.5%);
+  opacity: .85;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.halo {
+  position: absolute;
+  width: min(45vh, 400px);
+  height: min(45vh, 400px);
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--c1) 34%, transparent), transparent 66%);
+  filter: blur(26px);
+  opacity: .4;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.shadow {
+  position: absolute;
+  bottom: max(4%, 26px);
+  width: min(26vh, 200px);
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,.7), transparent 70%);
+  filter: blur(7px);
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ---------- 文字 ---------- */
+.meta { text-align: center; margin-top: clamp(14px, 2.4vh, 26px); flex: 0 0 auto; }
+.title {
+  margin: 0;
+  font-size: clamp(22px, 3.2vw, 32px);
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--text-primary);
+  text-shadow: 0 0 34px color-mix(in srgb, var(--c1) 35%, transparent);
+}
+.title-sub {
+  font-size: .52em;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: .35em;
+  text-shadow: none;
+}
+.subtitle { margin: 8px 0 0; font-size: 12px; color: var(--text-secondary); letter-spacing: .12em; }
+
+/* ---------- 逐词歌词（Folia 风格） ---------- */
+.lyrics {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 960px;
+  min-height: 200px;
+  margin-top: clamp(10px, 2vh, 22px);
+  position: relative;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 78%, transparent 100%);
+}
+
+.lyrics-inner {
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  will-change: transform;
+  transition: translate .65s cubic-bezier(.22, 1, .36, 1);
+}
+
+.lyric-line {
+  height: 56px;
+  line-height: 56px;
+  text-align: center;
+  white-space: nowrap;
+  font-size: clamp(17px, 2.3vw, 25px);
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--text-primary);
+  opacity: .22;
+  filter: blur(2px);
+  transform: scale(.9);
+  transform-origin: 50% 50%;
+  transition: opacity .45s ease, filter .45s ease, transform .45s cubic-bezier(.22, 1, .36, 1);
+}
+.lyric-line.near { opacity: .4; filter: blur(1px); transform: scale(.96); }
+
+.lyric-line.current {
+  opacity: 1;
+  filter: none;
+  transform: scale(1.45);
+  animation: line-breathe 3.4s ease-in-out infinite;
+}
+@keyframes line-breathe {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -3px; }
+}
+
+.lyric-line .w {
+  display: inline-block;
+  opacity: .38;
+  transition: opacity .16s linear, text-shadow .16s linear, translate .16s ease, scale .16s ease;
+}
+.lyric-line.current .w.pass { opacity: .92; }
+.lyric-line.current .w.active {
+  opacity: 1;
+  color: #fff;
+  scale: 1.1;
+  translate: 0 -2px;
+  text-shadow:
+    0 0 12px var(--c1),
+    0 0 28px color-mix(in srgb, var(--c1) 65%, transparent),
+    0 0 56px color-mix(in srgb, var(--c2) 40%, transparent);
+}
+
+/* 待机提示（未加载歌词时） */
+.lyrics-idle {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 13px;
+  color: rgba(244, 244, 245, .3);
+  letter-spacing: .14em;
+}
+
+/* ---------- 右侧毛玻璃面板 ---------- */
+.panel {
+  position: fixed;
+  top: 50%; right: 26px;
+  translate: 0 -50%;
+  z-index: 40;
+  width: 300px;
+  padding: 18px;
+  border-radius: 24px;
+  transition: opacity .3s, translate .3s;
+}
+.panel.hidden { opacity: 0; translate: 20px -50%; pointer-events: none; }
+
+.glass {
+  background: rgba(13, 13, 18, .78);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 24px 70px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+.tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 7px 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: .2s;
+}
+.tab:hover { color: var(--text-primary); }
+.tab.active { background: rgba(255,255,255,.12); color: var(--text-primary); }
+
+.tab-page { display: none; }
+.tab-page.active { display: block; }
+
+.panel-cover {
+  aspect-ratio: 1;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #101014;
+}
+.panel-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.panel-meta { margin: 14px 2px 12px; }
+.panel-title { font-size: 15px; font-weight: 600; }
+.panel-artist { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+.panel-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 2px 0;
+  font-size: 12px;
+  border-top: 1px solid rgba(255,255,255,.07);
+  margin-top: 10px;
+}
+.panel-row .dim { color: var(--text-secondary); }
+
+.ctl-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+#vol {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 4px; border-radius: 999px;
+  background: rgba(255,255,255,.18);
+  outline: none; cursor: pointer;
+}
+#vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 10px rgba(255,255,255,.8);
+}
+#vol::-moz-range-thumb {
+  width: 13px; height: 13px; border: none; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 10px rgba(255,255,255,.8);
+}
+
+/* ---------- 底部胶囊控件 ---------- */
+.player {
+  position: fixed;
+  left: 50%; bottom: 30px;
+  translate: -50% 0;
+  z-index: 40;
+  display: flex; align-items: center;
+  gap: clamp(10px, 1.6vw, 20px);
+  padding: 12px clamp(14px, 2vw, 24px);
+  border-radius: 999px;
+  background: rgba(11, 11, 16, .82);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 18px 54px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+.play-btn {
+  flex: 0 0 auto;
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  border: none; cursor: pointer;
+  display: grid; place-items: center;
+  background: var(--text-primary);
+  transition: transform .18s;
+}
+.play-btn:hover { transform: scale(1.06); }
+.play-btn:active { transform: scale(.94); }
+.play-btn svg { width: 22px; height: 22px; fill: var(--bg); }
+.play-btn .ico-pause { display: none; }
+.play-btn.playing .ico-play { display: none; }
+.play-btn.playing .ico-pause { display: block; }
+
+.icon-btn {
+  flex: 0 0 auto;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,.05);
+  color: var(--text-secondary);
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: .2s;
+}
+.icon-btn:hover { color: var(--text-primary); background: rgba(255,255,255,.12); }
+.icon-btn svg { width: 17px; height: 17px; fill: currentColor; }
+.icon-btn .ico-vol-off { display: none; }
+.icon-btn.muted .ico-vol-on { display: none; }
+.icon-btn.muted .ico-vol-off { display: block; }
+
+.bar-wrap { display: flex; align-items: center; gap: 12px; width: clamp(220px, 34vw, 440px); }
+.time {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  color: var(--text-secondary);
+  opacity: .75;
+  width: 38px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.bar {
+  position: relative; flex: 1; height: 18px;
+  display: flex; align-items: center;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.bar::before {
+  content: "";
+  position: absolute; left: 0; right: 0; height: 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.16);
+}
+.bar-fill {
+  position: absolute; left: 0; height: 4px; width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--c1), var(--c2));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--c1) 55%, transparent);
+}
+.bar-knob {
+  position: absolute; left: 0;
+  width: 12px; height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px rgba(255,255,255,.85);
+  opacity: 0;
+  transition: opacity .18s, scale .15s;
+}
+.bar:hover .bar-knob { opacity: 1; scale: 1.2; }
+
+.track-name { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+
+/* ---------- 启动提示 ---------- */
+.start-mask {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: rgba(7, 7, 11, .8);
+  transition: opacity .45s;
+}
+.start-mask.gone { opacity: 0; pointer-events: none; }
+.start-inner { text-align: center; }
+.start-btn {
+  width: 76px; height: 76px;
+  border-radius: 50%;
+  border: none; cursor: pointer;
+  background: var(--text-primary);
+  display: grid; place-items: center;
+  margin: 0 auto;
+  box-shadow: 0 0 60px color-mix(in srgb, var(--c1) 45%, transparent);
+  transition: transform .2s;
+}
+.start-btn:hover { transform: scale(1.08); }
+.start-btn svg { width: 32px; height: 32px; fill: var(--bg); margin-left: 4px; }
+.start-title { margin-top: 22px; font-size: 17px; font-weight: 600; }
+.start-hint { margin-top: 10px; font-size: 12px; color: var(--text-secondary); letter-spacing: .06em; }
+
+/* ---------- 自适应 ---------- */
+@media (max-width: 900px) {
+  .panel { top: 76px; right: 16px; translate: 0 0; }
+  .panel.hidden { translate: 16px 0; }
+}
+@media (max-width: 720px) {
+  .panel { display: none; }
+  .track-name { display: none; }
+  .gif-disc { width: min(27vh, 220px); height: min(27vh, 220px); }
+  .orbit { width: min(30vh, 244px); height: min(30vh, 244px); }
+  .ring { width: min(33vh, 266px); height: min(33vh, 266px); }
+  .halo { width: min(38vh, 320px); height: min(38vh, 320px); }
+  .lyric-line { font-size: 15px; }
+}

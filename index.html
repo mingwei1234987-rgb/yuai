@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>雨爱（司凤版）· Folia</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- 背景：WebGL Mesh 渐变（Folia latent 着色器，颜色从中央动图自动提取） -->
+  <canvas id="bg"></canvas>
+  <canvas id="wave"></canvas>
+
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span><span>FOLIA&nbsp;·&nbsp;雨爱</span></div>
+    <div class="topbar-actions">
+      <button id="panel-toggle" class="ghost-btn">面板</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="hero">
+      <div class="halo" id="halo"></div>
+      <div class="orbit" id="orbit"></div>
+      <div class="ring"></div>
+      <div class="gif-disc" id="disc">
+        <img id="cover" src="assets/aaa.gif" alt="旋转动图" draggable="false" />
+        <div class="disc-gloss"></div>
+      </div>
+      <div class="shadow" id="shadow"></div>
+    </section>
+
+    <section class="meta">
+      <h1 class="title">雨爱<span class="title-sub">（司凤版）</span></h1>
+      <p class="subtitle">司凤 · 单曲</p>
+    </section>
+
+    <section class="lyrics" id="lyrics">
+      <div class="lyrics-inner" id="lyrics-inner"></div>
+    </section>
+  </main>
+
+  <!-- 右侧毛玻璃面板（Folia UnifiedPanel 风格） -->
+  <aside class="panel glass" id="panel">
+    <div class="tabs">
+      <button class="tab active" data-tab="cover">封面</button>
+      <button class="tab" data-tab="ctrl">控制</button>
+    </div>
+
+    <div class="tab-page active" id="tab-cover">
+      <div class="panel-cover"><img src="assets/aaa.gif" alt="封面" /></div>
+      <div class="panel-meta">
+        <div class="panel-title">雨爱（司凤版）</div>
+        <div class="panel-artist">司凤</div>
+      </div>
+      <div class="panel-row"><span>队列</span><span class="dim">1 首歌曲</span></div>
+      <div class="panel-row"><span>来源</span><span class="dim">本地文件</span></div>
+    </div>
+
+    <div class="tab-page" id="tab-ctrl">
+      <div class="ctl-label">音量</div>
+      <input id="vol" type="range" min="0" max="100" value="85" />
+      <div class="panel-row" style="margin-top:18px"><span>循环</span>
+        <button id="loop" class="ghost-btn small active">单曲循环</button></div>
+      <div class="panel-row"><span>静音</span>
+        <button id="mute2" class="ghost-btn small">关闭</button></div>
+    </div>
+  </aside>
+
+  <!-- 底部胶囊控件（Folia FloatingPlayerControls 风格） -->
+  <footer class="player">
+    <button id="mute" class="icon-btn" title="静音 (M)" aria-label="静音">
+      <svg class="ico-vol-on" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+      <svg class="ico-vol-off" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+    </button>
+
+    <button id="play" class="play-btn" aria-label="播放/暂停">
+      <svg class="ico-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      <svg class="ico-pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
+    </button>
+
+    <div class="bar-wrap">
+      <span class="time" id="cur">0:00</span>
+      <div class="bar" id="bar">
+        <div class="bar-fill" id="fill"></div>
+        <div class="bar-knob" id="knob"></div>
+      </div>
+      <span class="time" id="dur">0:00</span>
+    </div>
+
+    <span class="track-name">雨爱（司凤版）</span>
+  </footer>
+
+  <!-- 启动提示（浏览器自动播放策略） -->
+  <div class="start-mask" id="start-mask">
+    <div class="start-inner">
+      <button id="start-btn" class="start-btn" aria-label="开始播放">
+        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <div class="start-title">点击播放《雨爱（司凤版）》</div>
+      <div class="start-hint">逐词歌词 · 动图随旋律旋转 · 鼓点踩点蹦哒 · 空格播放 / 暂停</div>
+    </div>
+  </div>
+
+  <audio id="audio" loop preload="auto"></audio>
+  <script src="app.js"></script>
+</body>
+</html>
