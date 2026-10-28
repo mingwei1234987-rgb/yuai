@@ -1,0 +1,1258 @@
+/* 雨爱（司凤版）· Folia 风格播放器
+ * 中央动图（aaa.gif）随旋律持续旋转，检测到鼓点/重拍时踩点蹦哒
+ * 背景 Mesh 渐变色从动图中自动提取（Folia 的 AI 配色思路）
+ */
+
+const $ = (s) => document.querySelector(s);
+
+const audio = $('#audio');
+const cover = $('#cover');
+const disc = $('#disc');
+const halo = $('#halo');
+const shadow = $('#shadow');
+const playBtn = $('#play');
+const startMask = $('#start-mask');
+const waveCv = $('#wave');
+const wctx = waveCv.getContext('2d');
+const orbit = $('#orbit');
+
+const curEl = $('#cur'), durEl = $('#dur'), fillEl = $('#fill'), knobEl = $('#knob');
+const barEl = $('#bar'), volEl = $('#vol'), loopBtn = $('#loop');
+const muteBtn = $('#mute'), muteBtn2 = $('#mute2');
+const lyricsInner = $('#lyrics-inner');
+
+/* 曲目固定为《雨爱（司凤版）》 */
+const DEFAULT_SRC = 'audio/yuai.mp3';
+audio.src = DEFAULT_SRC;
+
+let actx = null, analyser = null, srcNode = null;
+let freq = null, wave = null;
+let playing = false;
+
+/* ---------- 音频图 ---------- */
+function ensureGraph() {
+  if (actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = actx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.72;
+  srcNode = actx.createMediaElementSource(audio);
+  srcNode.connect(analyser);
+  analyser.connect(actx.destination);
+  freq = new Uint8Array(analyser.frequencyBinCount);
+  wave = new Uint8Array(analyser.fftSize);
+}
+
+/* ---------- 播放控制 ---------- */
+async function togglePlay() {
+  ensureGraph();
+  if (actx.state === 'suspended') await actx.resume();
+  if (audio.paused) {
+    try { await audio.play(); } catch (e) { console.warn(e); }
+  } else {
+    audio.pause();
+  }
+}
+
+playBtn.addEventListener('click', togglePlay);
+startMask.addEventListener('click', togglePlay);
+
+audio.addEventListener('play', () => {
+  playing = true;
+  playBtn.classList.add('playing');
+  startMask.classList.add('gone');
+});
+audio.addEventListener('pause', () => {
+  playing = false;
+  playBtn.classList.remove('playing');
+});
+audio.addEventListener('ended', () => {
+  playing = false;
+  playBtn.classList.remove('playing');
+});
+audio.addEventListener('loadedmetadata', () => { durEl.textContent = fmt(audio.duration); });
+audio.addEventListener('error', () => {
+  startMask.querySelector('.start-title').textContent = '未找到 audio/雨爱（司凤版）.mp3';
+});
+
+/* ---------- 音量 / 静音 / 循环 ---------- */
+volEl.addEventListener('input', () => { audio.volume = volEl.value / 100; });
+audio.volume = volEl.value / 100;
+
+function setMuted(m) {
+  audio.muted = m;
+  muteBtn.classList.toggle('muted', m);
+  muteBtn2.textContent = m ? '开启' : '关闭';
+  muteBtn2.classList.toggle('active', !m);
+}
+muteBtn.addEventListener('click', () => setMuted(!audio.muted));
+muteBtn2.addEventListener('click', () => setMuted(!audio.muted));
+
+loopBtn.addEventListener('click', () => {
+  const on = loopBtn.classList.toggle('active');
+  audio.loop = on;
+});
+
+/* ---------- 进度条 ---------- */
+let seeking = false;
+function seekFromEvent(e) {
+  const r = barEl.getBoundingClientRect();
+  const x = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+  const p = Math.min(1, Math.max(0, x / r.width));
+  if (audio.duration) audio.currentTime = p * audio.duration;
+  paintProgress(p);
+}
+barEl.addEventListener('pointerdown', (e) => { seeking = true; barEl.setPointerCapture(e.pointerId); seekFromEvent(e); });
+barEl.addEventListener('pointermove', (e) => { if (seeking) seekFromEvent(e); });
+barEl.addEventListener('pointerup', () => { seeking = false; });
+
+function paintProgress(p) {
+  fillEl.style.width = (p * 100) + '%';
+  knobEl.style.left = (p * 100) + '%';
+}
+audio.addEventListener('timeupdate', () => {
+  if (seeking || !audio.duration) return;
+  paintProgress(audio.currentTime / audio.duration);
+  curEl.textContent = fmt(audio.currentTime);
+});
+
+function fmt(s) {
+  if (!isFinite(s)) return '0:00';
+  const m = Math.floor(s / 60), r = Math.floor(s % 60);
+  return m + ':' + String(r).padStart(2, '0');
+}
+
+/* ---------- 右侧面板 ---------- */
+$('#panel-toggle').addEventListener('click', () => $('#panel').classList.toggle('hidden'));
+document.querySelectorAll('.tab').forEach((t) => {
+  t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x === t));
+    document.querySelectorAll('.tab-page').forEach((p) => p.classList.remove('active'));
+    $('#tab-' + t.dataset.tab).classList.add('active');
+  });
+});
+
+/* ---------- 快捷键 ---------- */
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowRight') audio.currentTime += 5;
+  if (e.code === 'ArrowLeft') audio.currentTime -= 5;
+  if (e.key === 'm' || e.key === 'M') setMuted(!audio.muted);
+});
+
+/* ---------- 从动图提取配色（Folia AI 主题配色思路） ---------- */
+const FALLBACK_PALETTE = [[340, 82, 68], [190, 90, 66], [268, 84, 70]];
+let waveC1 = 'hsl(340 82% 68%)';
+let waveC2 = 'hsl(190 90% 66%)';
+
+function hslToRgb(h, s, l) {
+  h /= 360; s /= 100; l /= 100;
+  if (s === 0) return [l, l, l];
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const f = (t) => {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [f(h + 1 / 3), f(h), f(h - 1 / 3)];
+}
+
+function extractPalette() {
+  try {
+    const c = document.createElement('canvas');
+    c.width = c.height = 48;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    const im = new Image();
+    im.onload = () => {
+      try {
+        g.drawImage(im, 0, 0, 48, 48);
+        const d = g.getImageData(0, 0, 48, 48).data;
+        const buckets = {};
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i], gg = d[i + 1], b = d[i + 2];
+          const max = Math.max(r, gg, b), min = Math.min(r, gg, b);
+          if (max < 50) continue;
+          const sat = (max - min) / max;
+          if (sat < 0.2) continue;
+          let h;
+          if (max === r) h = 60 * (((gg - b) / (max - min)) % 6);
+          else if (max === gg) h = 60 * ((b - r) / (max - min) + 2);
+          else h = 60 * ((r - gg) / (max - min) + 4);
+          if (h < 0) h += 360;
+          const key = Math.round(h / 24) * 24 % 360;
+          buckets[key] = (buckets[key] || 0) + sat * (max / 255);
+        }
+        const top = Object.entries(buckets).sort((a, b) => b[1] - a[1]).slice(0, 3);
+        if (!top.length) throw new Error('no color');
+        applyPalette(top.map(([h]) => [Number(h), 72, 62]));
+      } catch (err) {
+        applyPalette(FALLBACK_PALETTE);
+      }
+    };
+    im.onerror = () => applyPalette(FALLBACK_PALETTE);
+    im.src = cover.src;
+  } catch (err) {
+    applyPalette(FALLBACK_PALETTE);
+  }
+}
+
+function applyPalette(pal) {
+  const css = pal.map(([h, s, l]) => 'hsl(' + h + ' ' + s + '% ' + l + '%)');
+  const rs = document.documentElement.style;
+  rs.setProperty('--c1', css[0]);
+  rs.setProperty('--c2', css[1] || css[0]);
+  rs.setProperty('--c3', css[2] || css[1] || css[0]);
+  waveC1 = css[0];
+  waveC2 = css[1] || css[0];
+  if (bg) {
+    const gl = bg.gl;
+    for (let i = 0; i < 3; i++) {
+      const src = pal[i] || pal[0];
+      const rgb = hslToRgb(src[0], src[1], src[2]);
+      gl.uniform3f(bg.u['uC' + (i + 1)], rgb[0], rgb[1], rgb[2]);
+    }
+  }
+}
+
+/* ---------- WebGL Mesh 渐变背景（Folia latent 风格，GPU 渲染） ---------- */
+const BG_VS = 'attribute vec2 aPos;void main(){gl_Position=vec4(aPos,0.0,1.0);}';
+const BG_FS = [
+  '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+  'precision highp float;',
+  '#else',
+  'precision mediump float;',
+  '#endif',
+  'uniform vec2 uRes;',
+  'uniform float uT;',
+  'uniform float uLevel;',
+  'uniform float uBeat;',
+  'uniform vec3 uC1;',
+  'uniform vec3 uC2;',
+  'uniform vec3 uC3;',
+  'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453123);}',
+  'void main(){',
+  '  vec2 p=(gl_FragCoord.xy-0.5*uRes)/uRes.y;',
+  '  float t=uT;',
+  '  vec3 col=vec3(0.030,0.030,0.042);',
+  '  float pulse=0.60+uLevel*0.85+uBeat*0.45;',
+  '  vec2 q1=vec2(sin(t*0.21)*0.60,cos(t*0.16)*0.34);',
+  '  vec2 q2=vec2(cos(t*0.15+1.8)*0.56,sin(t*0.19+0.7)*0.36);',
+  '  vec2 q3=vec2(sin(t*0.12+3.2)*0.48+0.22,cos(t*0.14+2.4)*0.28-0.12);',
+  '  col+=uC1*(0.075*pulse)/(dot(p-q1,p-q1)+0.060);',
+  '  col+=uC2*(0.062*pulse)/(dot(p-q2,p-q2)+0.055);',
+  '  col+=uC3*(0.055*pulse)/(dot(p-q3,p-q3)+0.050);',
+  '  col+=vec3(0.045,0.045,0.065)*exp(-dot(p,p)*1.1);',
+  // 漂浮粒子光点
+  '  float pts=0.0;',
+  '  for(int i=0;i<14;i++){',
+  '    float fi=float(i);',
+  '    vec2 c=vec2(sin(t*(0.10+0.028*fi)+fi*2.4)*0.85,cos(t*(0.08+0.022*fi)+fi*1.7)*0.50);',
+  '    float r=0.0038*(0.65+0.35*sin(t*2.2+fi*3.1));',
+  '    pts+=1.0-smoothstep(0.0,r,length(p-c));',
+  '  }',
+  '  col+=vec3(0.85,0.90,1.0)*min(pts,1.3)*(0.30+uLevel*0.85+uBeat*0.35);',
+  '  col*=1.0-0.30*dot(p,p);',
+  '  col=1.0-exp(-col*1.35);',
+  '  col+=(hash(gl_FragCoord.xy+fract(t)*137.0)-0.5)*0.020;',
+  '  gl_FragColor=vec4(col,1.0);',
+  '}'
+].join('\n');
+
+let bg = null;
+function initBG() {
+  const cv = $('#bg');
+  const opts = { alpha: false, antialias: false, depth: false, powerPreference: 'high-performance' };
+  const gl = cv.getContext('webgl', opts) || cv.getContext('experimental-webgl', opts);
+  if (!gl) return null;
+  const mk = (type, src) => {
+    const s = gl.createShader(type);
+    gl.shaderSource(s, src);
+    gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+      console.warn('shader:', gl.getShaderInfoLog(s));
+      return null;
+    }
+    return s;
+  };
+  const vs = mk(gl.VERTEX_SHADER, BG_VS);
+  const fs = mk(gl.FRAGMENT_SHADER, BG_FS);
+  if (!vs || !fs) return null;
+  const prog = gl.createProgram();
+  gl.attachShader(prog, vs);
+  gl.attachShader(prog, fs);
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+    console.warn('link:', gl.getProgramInfoLog(prog));
+    return null;
+  }
+  gl.useProgram(prog);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, 'aPos');
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const u = {};
+  ['uRes', 'uT', 'uLevel', 'uBeat', 'uC1', 'uC2', 'uC3'].forEach((n) => { u[n] = gl.getUniformLocation(prog, n); });
+  return { gl, cv, u };
+}
+bg = initBG();
+if (bg) {
+  FALLBACK_PALETTE.forEach((c, i) => {
+    const rgb = hslToRgb(c[0], c[1], c[2]);
+    bg.gl.uniform3f(bg.u['uC' + (i + 1)], rgb[0], rgb[1], rgb[2]);
+  });
+} else {
+  $('#bg').style.display = 'none';
+}
+extractPalette();
+
+function resizeBG() {
+  if (!bg) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = Math.round(bg.cv.clientWidth * dpr);
+  const h = Math.round(bg.cv.clientHeight * dpr);
+  if (bg.cv.width !== w || bg.cv.height !== h) {
+    bg.cv.width = w;
+    bg.cv.height = h;
+    bg.gl.viewport(0, 0, w, h);
+  }
+}
+
+function drawBG(now) {
+  if (!bg) return;
+  resizeBG();
+  const gl = bg.gl;
+  gl.uniform2f(bg.u.uRes, bg.cv.width, bg.cv.height);
+  gl.uniform1f(bg.u.uT, now / 1000);
+  gl.uniform1f(bg.u.uLevel, smoothLevel);
+  gl.uniform1f(bg.u.uBeat, beatFlash);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+/* ---------- 波形画布 ---------- */
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = waveCv.clientWidth; H = waveCv.clientHeight;
+  waveCv.width = W * DPR; waveCv.height = H * DPR;
+  wctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+window.addEventListener('resize', () => { resize(); resizeBG(); });
+resize();
+resizeBG();
+
+/* ---------- 节拍检测 ---------- */
+const hist = [];
+let lastBeat = 0;
+let beatFlash = 0;     // 0~1 衰减，驱动蹦哒
+let spinBoost = 0;     // 踩点时的额外转速
+let angle = 0;         // 当前旋转角（弧度）
+let smoothBass = 0, smoothMid = 0, smoothHigh = 0, smoothLevel = 0;
+let beatTimes = [], bpm = 0;
+
+function bandAvg(arr, fromHz, toHz, sr, fftSize) {
+  const per = sr / fftSize;
+  let a = Math.max(0, Math.floor(fromHz / per));
+  let b = Math.min(arr.length - 1, Math.ceil(toHz / per));
+  let s = 0;
+  for (let i = a; i <= b; i++) s += arr[i];
+  return s / Math.max(1, (b - a + 1)) / 255;
+}
+
+function detectBeat(bass, now) {
+  hist.push(bass);
+  if (hist.length > 48) hist.shift();
+  let avg = 0;
+  for (const v of hist) avg += v;
+  avg /= hist.length;
+  const variance = hist.reduce((s, v) => s + (v - avg) ** 2, 0) / hist.length;
+  const threshold = avg * (1.25 + Math.min(0.35, variance * 8));
+
+  if (bass > threshold && bass > 0.16 && now - lastBeat > 230 && hist.length > 12) {
+    lastBeat = now;
+    const strength = Math.min(1, (bass - avg) / (avg + 0.001) / 1.6);
+    beatFlash = Math.max(beatFlash, 0.55 + 0.45 * strength);
+    spinBoost = Math.max(spinBoost, 1.4 + 2.6 * strength);
+
+    beatTimes.push(now);
+    if (beatTimes.length > 9) beatTimes.shift();
+    if (beatTimes.length >= 5) {
+      const gaps = [];
+      for (let i = 1; i < beatTimes.length; i++) gaps.push(beatTimes[i] - beatTimes[i - 1]);
+      gaps.sort((a, b) => a - b);
+      const med = gaps[Math.floor(gaps.length / 2)];
+      if (med > 240 && med < 1400) bpm = Math.round(60000 / med);
+    }
+  }
+}
+
+/* ---------- 主循环：旋转 + 蹦哒 ---------- */
+let prev = performance.now();
+function loop(now) {
+  const dt = Math.min(50, now - prev) / 1000;
+  prev = now;
+
+  let bass = 0, mid = 0, high = 0, level = 0;
+
+  if (analyser && playing) {
+    analyser.getByteFrequencyData(freq);
+    analyser.getByteTimeDomainData(wave);
+    const sr = actx.sampleRate;
+    bass = bandAvg(freq, 20, 150, sr, analyser.fftSize);
+    mid = bandAvg(freq, 150, 2000, sr, analyser.fftSize);
+    high = bandAvg(freq, 2000, 9000, sr, analyser.fftSize);
+    let sum = 0;
+    for (let i = 0; i < wave.length; i += 4) { const v = (wave[i] - 128) / 128; sum += v * v; }
+    level = Math.min(1, Math.sqrt(sum / (wave.length / 4)) * 2.4);
+  }
+
+  const k = playing ? 0.18 : 0.08;
+  smoothBass += (bass - smoothBass) * k;
+  smoothMid += (mid - smoothMid) * k;
+  smoothHigh += (high - smoothHigh) * k;
+  smoothLevel += (level - smoothLevel) * k;
+
+  if (playing) detectBeat(smoothBass, now);
+
+  beatFlash *= Math.pow(0.0025, dt);   // 蹦哒包络衰减
+  spinBoost *= Math.pow(0.02, dt);     // 踩点转速衰减
+
+  // 转速：基础速度随旋律能量变化，踩点瞬间额外加速（在合适的位置转）
+  const base = 0.55 + smoothLevel * 2.6 + smoothMid * 1.1;
+  const omega = playing ? base + spinBoost : 0.35;
+  angle += omega * dt;
+  if (angle > Math.PI * 2) angle -= Math.PI * 2;   // 防止长时间播放后精度衰减
+
+  const bounce = Math.sin(beatFlash * Math.PI) * 30;        // 上下蹦哒
+  const scale = 1 + beatFlash * 0.16 + smoothBass * 0.06;  // 缩放弹性
+  const tilt = Math.sin(angle * 0.5) * beatFlash * 8;      // 轻微倾斜
+
+  disc.style.transform =
+    'translateY(' + (-bounce) + 'px) rotate(' + (angle * 180 / Math.PI).toFixed(2) + 'deg) scale(' + scale.toFixed(3) + ') rotate(' + tilt.toFixed(2) + 'deg)';
+
+  if (orbit) orbit.style.transform = 'rotate(' + (angle * 180 / Math.PI).toFixed(2) + 'deg)';
+
+  halo.style.opacity = (0.32 + smoothBass * 0.9 + beatFlash * 0.4).toFixed(3);
+  halo.style.transform = 'scale(' + (1 + smoothLevel * 0.16 + beatFlash * 0.12).toFixed(3) + ')';
+  shadow.style.transform = 'scale(' + (1 - bounce / 90).toFixed(3) + ')';
+  shadow.style.opacity = (0.85 - bounce / 40).toFixed(3);
+
+  updateLyrics(audio.currentTime);
+
+  drawBG(now);
+
+  drawWave(now);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ---------- 逐词歌词（Folia 风格） ---------- */
+const LYRICS_URL = 'lyrics/yuai.lrc';
+const LINE_H = 56;   // 与 CSS .lyric-line 高度一致
+let lines = [];
+let curLine = -1;
+
+function tokenize(text) {
+  const tokens = [];
+  const re = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]|[a-zA-Z0-9']+/g;
+  let m;
+  while ((m = re.exec(text))) tokens.push(m[0]);
+  return tokens;
+}
+
+function parseLRC(txt) {
+  const raw = [];
+  for (const line of txt.split(/\r?\n/)) {
+    const m = line.match(/^\[(\d+):(\d+\.\d+)\](.*)$/);
+    if (!m) continue;
+    const t = parseInt(m[1], 10) * 60 + parseFloat(m[2]);
+    const text = m[3].trim();
+    if (text) raw.push({ t, text });
+  }
+  raw.sort((a, b) => a.t - b.t);
+  const songEnd = audio.duration && isFinite(audio.duration) ? audio.duration : 138.45;
+  return raw.map((l, i) => {
+    const end = i + 1 < raw.length ? raw[i + 1].t : songEnd;
+    const dur = Math.max(0.4, end - l.t);
+    const toks = tokenize(l.text);
+    const total = toks.reduce((s, c) => s + c.length, 0) || 1;
+    let acc = 0;
+    const words = toks.map((ch) => {
+      const w = ch.length / total * dur;
+      const t0 = l.t + acc;
+      acc += w;
+      return { ch, t0, t1: l.t + acc, state: '', el: null };
+    });
+    return { t: l.t, end, text: l.text, words, el: null };
+  });
+}
+
+function buildLyrics() {
+  lyricsInner.innerHTML = '';
+  lines.forEach((l, i) => {
+    const div = document.createElement('div');
+    div.className = 'lyric-line';
+    l.words.forEach((w) => {
+      const s = document.createElement('span');
+      s.className = 'w wait';
+      s.textContent = w.ch;
+      w.el = s;
+      div.appendChild(s);
+    });
+    l.el = div;
+    lyricsInner.appendChild(div);
+  });
+  curLine = -1;
+}
+
+let lrcRaw = '';
+
+async function loadLyrics() {
+  try {
+    const res = await fetch(LYRICS_URL);
+    if (!res.ok) throw new Error(res.status);
+    lrcRaw = await res.text();
+    lines = parseLRC(lrcRaw);
+    if (!lines.length) throw new Error('empty');
+    buildLyrics();
+  } catch (e) {
+    lyricsInner.innerHTML = '<div class="lyrics-idle">♪ 纯音乐 · 随旋律旋转 ♪</div>';
+  }
+}
+loadLyrics();
+audio.addEventListener('loadedmetadata', () => {
+  if (lrcRaw) {
+    lines = parseLRC(lrcRaw);   // 用真实时长重算（影响最后一行时长）
+    buildLyrics();
+  }
+});
+
+function updateLyrics(t) {
+  if (!lines.length) return;
+  let idx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (t >= lines[i].t) idx = i;
+    else break;
+  }
+  if (idx !== curLine) {
+    const prevEl = curLine >= 0 ? lines[curLine].el : null;
+    if (prevEl) prevEl.classList.remove('current');
+    curLine = idx;
+    if (idx >= 0) {
+      lines[idx].el.classList.add('current');
+      lyricsInner.style.translate = '0 ' + (-(idx * LINE_H + LINE_H / 2)) + 'px';
+      // 邻近行的明暗
+      for (let i = 0; i < lines.length; i++) {
+        if (i === idx) continue;
+        lines[i].el.classList.toggle('near', Math.abs(i - idx) <= 2);
+      }
+    } else {
+      lyricsInner.style.translate = '0 ' + (-(LINE_H / 2)) + 'px';
+      lines.forEach((l) => l.el.classList.remove('near'));
+    }
+  }
+  if (idx < 0) return;
+  const line = lines[idx];
+  for (const w of line.words) {
+    const st = t >= w.t1 ? 'pass' : (t >= w.t0 ? 'active' : 'wait');
+    if (st !== w.state) {
+      w.el.className = 'w ' + st;
+      w.state = st;
+    }
+  }
+}
+
+/* ---------- 底部波形（Folia monet AudioOverlay 风格） ---------- */
+function drawWave(now) {
+  wctx.clearRect(0, 0, W, H);
+  if (W < 10 || H < 10) return;
+
+  const midY = H * 0.52;
+  const amp = H * 0.4;
+
+  wctx.beginPath();
+  const N = 128;
+  for (let i = 0; i <= N; i++) {
+    let v;
+    if (analyser && playing) {
+      const idx = Math.floor(i / N * (wave.length - 1));
+      v = (wave[idx] - 128) / 128;
+    } else {
+      v = Math.sin(now / 700 + i * 0.18) * 0.05;  // 待机微澜
+    }
+    const x = (i / N) * W;
+    const y = midY + v * amp * (playing ? 1 : 0.6);
+    if (i === 0) wctx.moveTo(x, y);
+    else wctx.lineTo(x, y);
+  }
+
+  // 柔光（宽线低透明度，代替昂贵的 shadowBlur）
+  const soft = wctx.createLinearGradient(0, 0, W, 0);
+  soft.addColorStop(0, withAlpha(waveC1, 0.14));
+  soft.addColorStop(1, withAlpha(waveC2, 0.14));
+  wctx.strokeStyle = soft;
+  wctx.lineWidth = 7;
+  wctx.stroke();
+
+  const grad = wctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, withAlpha(waveC1, 0.6));
+  grad.addColorStop(1, withAlpha(waveC2, 0.6));
+  wctx.strokeStyle = grad;
+  wctx.lineWidth = 1.6;
+  wctx.stroke();
+
+  // 镜像填充，形成色带
+  wctx.lineTo(W, midY);
+  wctx.lineTo(0, midY);
+  wctx.closePath();
+  const fill = wctx.createLinearGradient(0, midY - amp, 0, midY + amp);
+  fill.addColorStop(0, withAlpha(waveC1, 0.14));
+  fill.addColorStop(0.5, withAlpha(waveC2, 0.05));
+  fill.addColorStop(1, withAlpha(waveC2, 0.14));
+  wctx.fillStyle = fill;
+  wctx.fill();
+}
+
+/* hsl(...) / #hex 统一转成带透明度的颜色 */
+function withAlpha(c, a) {
+  if (c.startsWith('hsl(')) {
+    const inner = c.slice(4, -1).trim();
+    return 'hsl(' + inner + ' / ' + a + ')';
+  }
+  if (c.startsWith('#')) {
+    const n = c.length === 4
+      ? c.slice(1).split('').map((x) => parseInt(x + x, 16))
+      : [0, 2, 4].map((i) => parseInt(c.slice(1 + i, 3 + i), 16));
+    return 'rgba(' + n[0] + ',' + n[1] + ',' + n[2] + ',' + a + ')';
+  }
+  return c;
+}
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>雨爱（司凤版）· Folia</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- 背景：WebGL Mesh 渐变（Folia latent 着色器，颜色从中央动图自动提取） -->
+  <canvas id="bg"></canvas>
+  <canvas id="wave"></canvas>
+
+  <header class="topbar">
+    <div class="brand"><span class="dot"></span><span>FOLIA&nbsp;·&nbsp;雨爱</span></div>
+    <div class="topbar-actions">
+      <button id="panel-toggle" class="ghost-btn">面板</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <section class="hero">
+      <div class="halo" id="halo"></div>
+      <div class="orbit" id="orbit"></div>
+      <div class="ring"></div>
+      <div class="gif-disc" id="disc">
+        <img id="cover" src="assets/aaa.gif" alt="旋转动图" draggable="false" />
+        <div class="disc-gloss"></div>
+      </div>
+      <div class="shadow" id="shadow"></div>
+    </section>
+
+    <section class="meta">
+      <h1 class="title">雨爱<span class="title-sub">（司凤版）</span></h1>
+      <p class="subtitle">司凤 · 单曲</p>
+    </section>
+
+    <section class="lyrics" id="lyrics">
+      <div class="lyrics-inner" id="lyrics-inner"></div>
+    </section>
+  </main>
+
+  <!-- 右侧毛玻璃面板（Folia UnifiedPanel 风格） -->
+  <aside class="panel glass" id="panel">
+    <div class="tabs">
+      <button class="tab active" data-tab="cover">封面</button>
+      <button class="tab" data-tab="ctrl">控制</button>
+    </div>
+
+    <div class="tab-page active" id="tab-cover">
+      <div class="panel-cover"><img src="assets/aaa.gif" alt="封面" /></div>
+      <div class="panel-meta">
+        <div class="panel-title">雨爱（司凤版）</div>
+        <div class="panel-artist">司凤</div>
+      </div>
+      <div class="panel-row"><span>队列</span><span class="dim">1 首歌曲</span></div>
+      <div class="panel-row"><span>来源</span><span class="dim">本地文件</span></div>
+    </div>
+
+    <div class="tab-page" id="tab-ctrl">
+      <div class="ctl-label">音量</div>
+      <input id="vol" type="range" min="0" max="100" value="85" />
+      <div class="panel-row" style="margin-top:18px"><span>循环</span>
+        <button id="loop" class="ghost-btn small active">单曲循环</button></div>
+      <div class="panel-row"><span>静音</span>
+        <button id="mute2" class="ghost-btn small">关闭</button></div>
+    </div>
+  </aside>
+
+  <!-- 底部胶囊控件（Folia FloatingPlayerControls 风格） -->
+  <footer class="player">
+    <button id="mute" class="icon-btn" title="静音 (M)" aria-label="静音">
+      <svg class="ico-vol-on" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+      <svg class="ico-vol-off" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/><path d="M16 9l5 6M21 9l-5 6" stroke="currentColor" stroke-width="1.6" fill="none"/></svg>
+    </button>
+
+    <button id="play" class="play-btn" aria-label="播放/暂停">
+      <svg class="ico-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      <svg class="ico-pause" viewBox="0 0 24 24"><path d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg>
+    </button>
+
+    <div class="bar-wrap">
+      <span class="time" id="cur">0:00</span>
+      <div class="bar" id="bar">
+        <div class="bar-fill" id="fill"></div>
+        <div class="bar-knob" id="knob"></div>
+      </div>
+      <span class="time" id="dur">0:00</span>
+    </div>
+
+    <span class="track-name">雨爱（司凤版）</span>
+  </footer>
+
+  <!-- 启动提示（浏览器自动播放策略） -->
+  <div class="start-mask" id="start-mask">
+    <div class="start-inner">
+      <button id="start-btn" class="start-btn" aria-label="开始播放">
+        <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+      </button>
+      <div class="start-title">点击播放《雨爱（司凤版）》</div>
+      <div class="start-hint">逐词歌词 · 动图随旋律旋转 · 鼓点踩点蹦哒 · 空格播放 / 暂停</div>
+    </div>
+  </div>
+
+  <audio id="audio" loop preload="auto"></audio>
+  <script src="app.js"></script>
+</body>
+</html>
+
+# 雨爱（司凤版）· Folia 风格播放器
+
+界面复刻自 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)（"Lyrics Reimagined" 全屏沉浸式播放器）的视觉语言：午夜墨染底色 `#09090b`、Inter/Noto Sans 字体栈、毛玻璃右侧面板、底部胶囊控件、Mesh 渐变背景、逐词发光歌词。
+
+中央旋转蹦哒的主角是 `assets/aaa.gif`，曲目固定为 `audio/yuai.mp3`，歌词在 `lyrics/yuai.lrc`。
+
+## 使用
+
+浏览器安全策略要求经本地服务器打开（file:// 下 Web Audio 取不到频谱）：
+
+```powershell
+cd d:\作业\music-player
+D:\PsychoPy2\python.exe -m http.server 8000
+```
+
+访问 http://localhost:8000 ，点击页面中央播放按钮开始。
+
+## 动效原理
+
+| 表现 | 驱动来源 |
+| --- | --- |
+| 持续旋转 | 整体音量 RMS + 中频（旋律）能量，能量越高转越快 |
+| 踩点蹦哒 | 20–150Hz 低频能量 vs 近 48 帧滑动均值的突变检测（自适应阈值 + 230ms 去抖），鼓点处旋转加速 + 上蹦 |
+| 逐词歌词 | LRC 行时间按词长分配词级时间戳，当前行放大 1.3 倍 + 逐词发光（`text-shadow` 双层辉光），非当前行模糊压暗 |
+| 背景配色 | 从 aaa.gif 首帧提取主色（HSV 分桶），注入 `--c1/--c2/--c3`，Mesh 渐变随节拍呼吸 |
+| 底部波形 | `AnalyserNode` 时域数据绘制镜像色带 |
+| BPM | 取最近节拍间隔的中位数换算 |
+
+## 歌词时间轴来源
+
+本地音频（Settle一虾子《雨爱》，138.45s）在网易云/QK 均无现成 LRC。时间轴通过 **chroma DTW** 推导：下载原版《雨爱》（杨丞琳，网易云 5235487）作参考，计算两首歌的色度特征序列做动态时间规整，把原版 LRC 的每个时间点弯曲映射到本地音频；后半段与网易云 138 秒 Live 版 LRC 的结构互相印证（误差 <1.5s）。
+
+## 快捷键
+
+- `空格`：播放 / 暂停
+- `←` / `→`：快退 / 快进 5 秒
+- `M`：静音
+
+/* Folia 风格 · 雨爱（司凤版）
+ * 设计语言复刻自 chthollyphile/folia-major：
+ * 午夜墨染底色 #09090b、Inter/Noto Sans 字体栈、毛玻璃面板、胶囊控件
+ */
+
+:root {
+  --bg: #09090b;
+  --text-primary: #f4f4f5;
+  --text-secondary: #71717a;
+  /* 以下三个强调色由 app.js 从中央动图自动提取 */
+  --c1: #ff6fa5;
+  --c2: #6fe7ff;
+  --c3: #a06bff;
+  --glass-bg: rgba(255, 255, 255, .06);
+  --glass-border: rgba(255, 255, 255, .12);
+  font-family: "Inter", "Noto Sans CJK SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+body { cursor: default; user-select: none; }
+
+/* ---------- 背景：WebGL Mesh 渐变 ---------- */
+#bg {
+  position: fixed;
+  inset: 0;
+  width: 100%; height: 100%;
+  z-index: 0;
+  display: block;
+  background: #09090b;
+}
+
+#wave {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  width: 100%; height: 132px;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px clamp(18px, 3vw, 34px);
+}
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 12px; letter-spacing: .24em; color: var(--text-secondary);
+  text-transform: uppercase;
+}
+.brand .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--c1);
+  box-shadow: 0 0 12px var(--c1);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse { 50% { transform: scale(.55); opacity: .5; } }
+
+.ghost-btn {
+  border: 1px solid var(--glass-border);
+  background: rgba(20, 20, 28, .55);
+  color: var(--text-primary);
+  padding: 7px 15px;
+  border-radius: 999px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: .22s;
+}
+.ghost-btn:hover { background: rgba(255,255,255,.12); border-color: rgba(255,255,255,.3); }
+.ghost-btn.small { padding: 5px 12px; font-size: 11px; }
+.ghost-btn.active {
+  border-color: color-mix(in srgb, var(--c1) 70%, transparent);
+  background: color-mix(in srgb, var(--c1) 20%, transparent);
+  color: #fff;
+}
+
+/* ---------- 中央舞台 ---------- */
+.stage {
+  position: relative; z-index: 10;
+  height: 100%;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 72px 24px 150px;
+}
+
+.hero {
+  flex: 0 0 auto;
+  width: 100%;
+  display: flex; align-items: center; justify-content: center;
+  position: relative;
+  min-height: 0;
+}
+
+.gif-disc {
+  position: relative;
+  width: min(31vh, 272px);
+  height: min(31vh, 272px);
+  border-radius: 50%;
+  overflow: hidden;
+  will-change: transform;
+  transform-origin: 50% 50%;
+  background: #101014;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,.1),
+    0 30px 80px rgba(0,0,0,.6);
+}
+.gif-disc img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+.disc-gloss {
+  position: absolute; inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(135deg, rgba(255,255,255,.22), transparent 40%, transparent 62%, rgba(255,255,255,.08));
+  pointer-events: none;
+}
+
+.ring {
+  position: absolute;
+  width: min(38vh, 330px);
+  height: min(38vh, 330px);
+  border-radius: 50%;
+  border: 1px solid rgba(255,255,255,.08);
+  pointer-events: none;
+}
+
+/* 旋转彩环（随旋律转动） */
+.orbit {
+  position: absolute;
+  width: min(41vh, 352px);
+  height: min(41vh, 352px);
+  border-radius: 50%;
+  background: conic-gradient(from 0deg,
+    transparent 0deg,
+    color-mix(in srgb, var(--c1) 60%, transparent) 55deg,
+    transparent 135deg,
+    color-mix(in srgb, var(--c2) 50%, transparent) 215deg,
+    transparent 295deg);
+  -webkit-mask: radial-gradient(circle, transparent 60.5%, #000 62.5%, #000 65.5%, transparent 67.5%);
+  mask: radial-gradient(circle, transparent 60.5%, #000 62.5%, #000 65.5%, transparent 67.5%);
+  opacity: .85;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.halo {
+  position: absolute;
+  width: min(45vh, 400px);
+  height: min(45vh, 400px);
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--c1) 34%, transparent), transparent 66%);
+  filter: blur(26px);
+  opacity: .4;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.shadow {
+  position: absolute;
+  bottom: max(4%, 26px);
+  width: min(26vh, 200px);
+  height: 24px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(0,0,0,.7), transparent 70%);
+  filter: blur(7px);
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ---------- 文字 ---------- */
+.meta { text-align: center; margin-top: clamp(14px, 2.4vh, 26px); flex: 0 0 auto; }
+.title {
+  margin: 0;
+  font-size: clamp(22px, 3.2vw, 32px);
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: var(--text-primary);
+  text-shadow: 0 0 34px color-mix(in srgb, var(--c1) 35%, transparent);
+}
+.title-sub {
+  font-size: .52em;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: .35em;
+  text-shadow: none;
+}
+.subtitle { margin: 8px 0 0; font-size: 12px; color: var(--text-secondary); letter-spacing: .12em; }
+
+/* ---------- 逐词歌词（Folia 风格） ---------- */
+.lyrics {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 960px;
+  min-height: 200px;
+  margin-top: clamp(10px, 2vh, 22px);
+  position: relative;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 78%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 22%, #000 78%, transparent 100%);
+}
+
+.lyrics-inner {
+  position: absolute;
+  left: 0; right: 0; top: 50%;
+  will-change: transform;
+  transition: translate .65s cubic-bezier(.22, 1, .36, 1);
+}
+
+.lyric-line {
+  height: 56px;
+  line-height: 56px;
+  text-align: center;
+  white-space: nowrap;
+  font-size: clamp(17px, 2.3vw, 25px);
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--text-primary);
+  opacity: .22;
+  filter: blur(2px);
+  transform: scale(.9);
+  transform-origin: 50% 50%;
+  transition: opacity .45s ease, filter .45s ease, transform .45s cubic-bezier(.22, 1, .36, 1);
+}
+.lyric-line.near { opacity: .4; filter: blur(1px); transform: scale(.96); }
+
+.lyric-line.current {
+  opacity: 1;
+  filter: none;
+  transform: scale(1.45);
+  animation: line-breathe 3.4s ease-in-out infinite;
+}
+@keyframes line-breathe {
+  0%, 100% { translate: 0 0; }
+  50% { translate: 0 -3px; }
+}
+
+.lyric-line .w {
+  display: inline-block;
+  opacity: .38;
+  transition: opacity .16s linear, text-shadow .16s linear, translate .16s ease, scale .16s ease;
+}
+.lyric-line.current .w.pass { opacity: .92; }
+.lyric-line.current .w.active {
+  opacity: 1;
+  color: #fff;
+  scale: 1.1;
+  translate: 0 -2px;
+  text-shadow:
+    0 0 12px var(--c1),
+    0 0 28px color-mix(in srgb, var(--c1) 65%, transparent),
+    0 0 56px color-mix(in srgb, var(--c2) 40%, transparent);
+}
+
+/* 待机提示（未加载歌词时） */
+.lyrics-idle {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  font-size: 13px;
+  color: rgba(244, 244, 245, .3);
+  letter-spacing: .14em;
+}
+
+/* ---------- 右侧毛玻璃面板 ---------- */
+.panel {
+  position: fixed;
+  top: 50%; right: 26px;
+  translate: 0 -50%;
+  z-index: 40;
+  width: 300px;
+  padding: 18px;
+  border-radius: 24px;
+  transition: opacity .3s, translate .3s;
+}
+.panel.hidden { opacity: 0; translate: 20px -50%; pointer-events: none; }
+
+.glass {
+  background: rgba(13, 13, 18, .78);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 24px 70px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+.tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+.tab {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 7px 0;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: .2s;
+}
+.tab:hover { color: var(--text-primary); }
+.tab.active { background: rgba(255,255,255,.12); color: var(--text-primary); }
+
+.tab-page { display: none; }
+.tab-page.active { display: block; }
+
+.panel-cover {
+  aspect-ratio: 1;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #101014;
+}
+.panel-cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.panel-meta { margin: 14px 2px 12px; }
+.panel-title { font-size: 15px; font-weight: 600; }
+.panel-artist { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
+
+.panel-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 2px 0;
+  font-size: 12px;
+  border-top: 1px solid rgba(255,255,255,.07);
+  margin-top: 10px;
+}
+.panel-row .dim { color: var(--text-secondary); }
+
+.ctl-label { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+#vol {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 4px; border-radius: 999px;
+  background: rgba(255,255,255,.18);
+  outline: none; cursor: pointer;
+}
+#vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 10px rgba(255,255,255,.8);
+}
+#vol::-moz-range-thumb {
+  width: 13px; height: 13px; border: none; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 10px rgba(255,255,255,.8);
+}
+
+/* ---------- 底部胶囊控件 ---------- */
+.player {
+  position: fixed;
+  left: 50%; bottom: 30px;
+  translate: -50% 0;
+  z-index: 40;
+  display: flex; align-items: center;
+  gap: clamp(10px, 1.6vw, 20px);
+  padding: 12px clamp(14px, 2vw, 24px);
+  border-radius: 999px;
+  background: rgba(11, 11, 16, .82);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 18px 54px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
+}
+
+.play-btn {
+  flex: 0 0 auto;
+  width: 48px; height: 48px;
+  border-radius: 50%;
+  border: none; cursor: pointer;
+  display: grid; place-items: center;
+  background: var(--text-primary);
+  transition: transform .18s;
+}
+.play-btn:hover { transform: scale(1.06); }
+.play-btn:active { transform: scale(.94); }
+.play-btn svg { width: 22px; height: 22px; fill: var(--bg); }
+.play-btn .ico-pause { display: none; }
+.play-btn.playing .ico-play { display: none; }
+.play-btn.playing .ico-pause { display: block; }
+
+.icon-btn {
+  flex: 0 0 auto;
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: rgba(255,255,255,.05);
+  color: var(--text-secondary);
+  display: grid; place-items: center;
+  cursor: pointer;
+  transition: .2s;
+}
+.icon-btn:hover { color: var(--text-primary); background: rgba(255,255,255,.12); }
+.icon-btn svg { width: 17px; height: 17px; fill: currentColor; }
+.icon-btn .ico-vol-off { display: none; }
+.icon-btn.muted .ico-vol-on { display: none; }
+.icon-btn.muted .ico-vol-off { display: block; }
+
+.bar-wrap { display: flex; align-items: center; gap: 12px; width: clamp(220px, 34vw, 440px); }
+.time {
+  font-size: 10px;
+  font-family: ui-monospace, "SF Mono", Consolas, monospace;
+  color: var(--text-secondary);
+  opacity: .75;
+  width: 38px; text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.bar {
+  position: relative; flex: 1; height: 18px;
+  display: flex; align-items: center;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.bar::before {
+  content: "";
+  position: absolute; left: 0; right: 0; height: 4px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.16);
+}
+.bar-fill {
+  position: absolute; left: 0; height: 4px; width: 0%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--c1), var(--c2));
+  box-shadow: 0 0 12px color-mix(in srgb, var(--c1) 55%, transparent);
+}
+.bar-knob {
+  position: absolute; left: 0;
+  width: 12px; height: 12px;
+  margin-left: -6px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 10px rgba(255,255,255,.85);
+  opacity: 0;
+  transition: opacity .18s, scale .15s;
+}
+.bar:hover .bar-knob { opacity: 1; scale: 1.2; }
+
+.track-name { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+
+/* ---------- 启动提示 ---------- */
+.start-mask {
+  position: fixed; inset: 0; z-index: 100;
+  display: grid; place-items: center;
+  background: rgba(7, 7, 11, .8);
+  transition: opacity .45s;
+}
+.start-mask.gone { opacity: 0; pointer-events: none; }
+.start-inner { text-align: center; }
+.start-btn {
+  width: 76px; height: 76px;
+  border-radius: 50%;
+  border: none; cursor: pointer;
+  background: var(--text-primary);
+  display: grid; place-items: center;
+  margin: 0 auto;
+  box-shadow: 0 0 60px color-mix(in srgb, var(--c1) 45%, transparent);
+  transition: transform .2s;
+}
+.start-btn:hover { transform: scale(1.08); }
+.start-btn svg { width: 32px; height: 32px; fill: var(--bg); margin-left: 4px; }
+.start-title { margin-top: 22px; font-size: 17px; font-weight: 600; }
+.start-hint { margin-top: 10px; font-size: 12px; color: var(--text-secondary); letter-spacing: .06em; }
+
+/* ---------- 自适应 ---------- */
+@media (max-width: 900px) {
+  .panel { top: 76px; right: 16px; translate: 0 0; }
+  .panel.hidden { translate: 16px 0; }
+}
+@media (max-width: 720px) {
+  .panel { display: none; }
+  .track-name { display: none; }
+  .gif-disc { width: min(27vh, 220px); height: min(27vh, 220px); }
+  .orbit { width: min(30vh, 244px); height: min(30vh, 244px); }
+  .ring { width: min(33vh, 266px); height: min(33vh, 266px); }
+  .halo { width: min(38vh, 320px); height: min(38vh, 320px); }
+  .lyric-line { font-size: 15px; }
+}
